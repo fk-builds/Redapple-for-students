@@ -78,7 +78,7 @@ async function notify(userId, title, message, email) {
 
 app.get('/api/health', (req, res) => {
   const h = db.health();
-  res.json({ status: 'ok', db: 'sqlite', time: new Date().toISOString(), users: h.users, leads: h.leads });
+  res.json({ status: 'ok', db: 'json', time: new Date().toISOString(), users: h.users, leads: h.leads });
 });
 
 app.get('/api/site-content', (req, res) => {
