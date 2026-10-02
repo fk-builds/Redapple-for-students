@@ -7,4 +7,5 @@ uploads/
 Unselected files/
 public/uploads/
 .env
-.env.*
+.env.local
+!.env.example
