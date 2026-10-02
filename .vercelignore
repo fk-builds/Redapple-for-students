@@ -1,0 +1,12 @@
+node_modules
+.cache
+.npm
+.arena
+Unselected files
+data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.git
+.env
+.env.local

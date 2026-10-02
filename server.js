@@ -14,8 +14,10 @@ const { sendMail } = require('./mail');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'red-apple-super-secret-2025';
+const IS_VERCEL = !!process.env.VERCEL;
+app.set('trust proxy', 1);
 
-const uploadDir = path.join(__dirname, 'public', 'uploads');
+const uploadDir = IS_VERCEL ? path.join('/tmp', 'redapple-uploads') : path.join(__dirname, 'public', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -460,6 +462,7 @@ app.get('/api/users', authMiddleware, adminMiddleware, (req, res) => {
   res.json(db.getUsers().map(publicUser));
 });
 
+if (IS_VERCEL) app.use('/uploads', express.static(uploadDir));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
@@ -468,10 +471,13 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🍎 Red Apple Student Partner Platform running!`);
-  console.log(`→ Local: http://localhost:${PORT}`);
-  console.log(`→ DB: SQLite data/redapple.sqlite`);
-  console.log(`→ Admin: ${process.env.ADMIN_EMAIL || 'admin@redapple.digital'}`);
-  console.log(`→ Health: http://localhost:${PORT}/api/health\n`);
-});
+module.exports = app;
+if (!IS_VERCEL && require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🍎 Red Apple Student Partner Platform running!`);
+    console.log(`→ Local: http://localhost:${PORT}`);
+    console.log(`→ DB: SQLite data/redapple.sqlite`);
+    console.log(`→ Admin: ${process.env.ADMIN_EMAIL || 'admin@redapple.digital'}`);
+    console.log(`→ Health: http://localhost:${PORT}/api/health\n`);
+  });
+}

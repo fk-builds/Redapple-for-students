@@ -8,13 +8,29 @@ Production-style platform for **Red Apple Digital Agency** Student Partner Progr
 - Single-page app in `public/index.html`
 - Local image uploads in `public/uploads`
 
-## Run
+## Run locally
 ```bash
 npm install
 cp .env.example .env   # set JWT_SECRET
 npm start
 # http://localhost:3000
 ```
+
+## Deploy on Vercel
+Repo is Vercel-ready (`vercel.json` + exported Express app).
+
+1. Open [vercel.com/new](https://vercel.com/new)
+2. Import `fk-builds/Redapple-for-students`
+3. Framework: **Other**
+4. Environment variables:
+   - `JWT_SECRET` — long random string
+   - `ADMIN_EMAIL` — `admin@redapple.digital`
+   - `ADMIN_PASSWORD` — your admin password
+5. Deploy
+
+Live URL will be `https://redapple-for-students.vercel.app` (or the URL Vercel shows).
+
+**Note:** Vercel’s filesystem is ephemeral, so SQLite resets on cold start. The site still boots (admin is seeded). For permanent data, add Neon/Supabase `DATABASE_URL` later.
 
 Admin: `admin@redapple.digital` / `admin123`
 

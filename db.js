@@ -4,14 +4,16 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const IS_SERVERLESS = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = IS_SERVERLESS ? path.join('/tmp', 'redapple-data') : path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'redapple.sqlite');
-const JSON_PATH = path.join(DATA_DIR, 'db.json');
+const JSON_PATH = path.join(__dirname, 'data', 'db.json');
 
 const sqlite = new Database(DB_PATH);
-sqlite.pragma('journal_mode = WAL');
+sqlite.pragma(IS_SERVERLESS ? 'journal_mode = DELETE' : 'journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
+sqlite.pragma('busy_timeout = 5000');
 
 function now() { return new Date().toISOString(); }
 function nid(prefix = 'id') {

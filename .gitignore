@@ -9,3 +9,5 @@ public/uploads/
 .env
 .env.local
 !.env.example
+.vercel
+.cache/
