@@ -2,18 +2,12 @@
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
 
 const IS_SERVERLESS = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const DATA_DIR = IS_SERVERLESS ? path.join('/tmp', 'redapple-data') : path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-const DB_PATH = path.join(DATA_DIR, 'redapple.sqlite');
-const JSON_PATH = path.join(__dirname, 'data', 'db.json');
-
-const sqlite = new Database(DB_PATH);
-sqlite.pragma(IS_SERVERLESS ? 'journal_mode = DELETE' : 'journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-sqlite.pragma('busy_timeout = 5000');
+const DATA_FILE = path.join(DATA_DIR, 'db.json');
+const LEGACY_JSON = path.join(__dirname, 'data', 'db.json');
 
 function now() { return new Date().toISOString(); }
 function nid(prefix = 'id') {
@@ -21,127 +15,6 @@ function nid(prefix = 'id') {
 }
 function referralCode() {
   return 'RA' + Math.random().toString(36).slice(2, 8).toUpperCase();
-}
-
-sqlite.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
-  password TEXT NOT NULL,
-  phone TEXT DEFAULT '',
-  city TEXT DEFAULT '',
-  role TEXT DEFAULT 'student',
-  status TEXT DEFAULT 'active',
-  referral_code TEXT UNIQUE,
-  referred_by TEXT DEFAULT '',
-  stats_leads INTEGER DEFAULT 0,
-  stats_approved INTEGER DEFAULT 0,
-  stats_commission INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS applications (
-  id TEXT PRIMARY KEY,
-  name TEXT, email TEXT, phone TEXT, city TEXT, message TEXT,
-  status TEXT DEFAULT 'pending',
-  referral_code TEXT DEFAULT '',
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS leads (
-  id TEXT PRIMARY KEY,
-  student_id TEXT, student_name TEXT, student_email TEXT,
-  business_name TEXT, contact_name TEXT, phone TEXT, email TEXT,
-  city TEXT, website TEXT, need TEXT, notes TEXT,
-  status TEXT DEFAULT 'submitted',
-  deal_amount INTEGER DEFAULT 0,
-  commission INTEGER DEFAULT 0,
-  payout_status TEXT DEFAULT 'unpaid',
-  score INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS modules (
-  id TEXT PRIMARY KEY,
-  title TEXT, lessons INTEGER DEFAULT 1, category TEXT, description TEXT
-);
-CREATE TABLE IF NOT EXISTS module_progress (
-  user_id TEXT NOT NULL,
-  module_id TEXT NOT NULL,
-  completed INTEGER DEFAULT 0,
-  completed_at TEXT,
-  PRIMARY KEY (user_id, module_id)
-);
-CREATE TABLE IF NOT EXISTS faqs (
-  id TEXT PRIMARY KEY,
-  question TEXT, answer TEXT, category TEXT
-);
-CREATE TABLE IF NOT EXISTS kv (
-  k TEXT PRIMARY KEY,
-  v TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS activity_logs (
-  id TEXT PRIMARY KEY,
-  action TEXT, detail TEXT, user_name TEXT, role TEXT, time TEXT
-);
-CREATE TABLE IF NOT EXISTS notifications (
-  id TEXT PRIMARY KEY,
-  user_id TEXT, title TEXT, message TEXT, read_flag INTEGER DEFAULT 0, time TEXT
-);
-CREATE TABLE IF NOT EXISTS media (
-  id TEXT PRIMARY KEY,
-  url TEXT, filename TEXT, type TEXT, created_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_leads_student ON leads(student_id);
-CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
-CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id);
-`);
-
-function mapUser(r) {
-  if (!r) return null;
-  return {
-    id: r.id, name: r.name, email: r.email, password: r.password,
-    phone: r.phone || '', city: r.city || '', role: r.role, status: r.status,
-    referralCode: r.referral_code, referredBy: r.referred_by || '',
-    createdAt: r.created_at,
-    stats: { leads: r.stats_leads || 0, approved: r.stats_approved || 0, commission: r.stats_commission || 0 }
-  };
-}
-function mapLead(r) {
-  if (!r) return null;
-  return {
-    id: r.id, studentId: r.student_id, studentName: r.student_name, studentEmail: r.student_email,
-    businessName: r.business_name, contactName: r.contact_name || '', phone: r.phone || '',
-    email: r.email || '', city: r.city || '', website: r.website || '', need: r.need || '',
-    notes: r.notes || '', status: r.status, dealAmount: r.deal_amount || 0,
-    commission: r.commission || 0, payoutStatus: r.payout_status || 'unpaid',
-    score: r.score || 0, createdAt: r.created_at, updatedAt: r.updated_at
-  };
-}
-function mapApp(r) {
-  if (!r) return null;
-  return {
-    id: r.id, name: r.name, email: r.email, phone: r.phone, city: r.city || '',
-    message: r.message || '', status: r.status, referralCode: r.referral_code || '',
-    createdAt: r.created_at
-  };
-}
-function mapMod(r) {
-  if (!r) return null;
-  return { id: r.id, title: r.title, lessons: r.lessons, category: r.category, description: r.description };
-}
-function mapFaq(r) {
-  if (!r) return null;
-  return { id: r.id, question: r.question, answer: r.answer, category: r.category };
-}
-
-function getKv(k, fallback) {
-  const row = sqlite.prepare('SELECT v FROM kv WHERE k=?').get(k);
-  if (!row) return fallback;
-  try { return JSON.parse(row.v); } catch { return fallback; }
-}
-function setKv(k, v) {
-  sqlite.prepare('INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v')
-    .run(k, JSON.stringify(v));
 }
 
 const DEFAULT_CONTENT = {
@@ -175,80 +48,79 @@ const DEFAULT_FAQS = [
   { id: '5', question: 'Can I track my leads?', answer: 'Yes. Your dashboard shows lead status, verification, sales progress, and commission info for every submission.', category: 'general' }
 ];
 
-function seedIfEmpty() {
-  const n = sqlite.prepare('SELECT COUNT(*) c FROM users').get().c;
-  if (n > 0) return;
+function emptyDb() {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@redapple.digital';
   const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
-  sqlite.prepare(`INSERT INTO users(id,name,email,password,phone,city,role,status,referral_code,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
-    'admin-001', 'Admin', adminEmail, bcrypt.hashSync(adminPass, 10),
-    '', 'Islamabad', 'admin', 'active', 'RAOWNER', now()
-  );
-  const insM = sqlite.prepare('INSERT INTO modules(id,title,lessons,category,description) VALUES(?,?,?,?,?)');
-  DEFAULT_MODULES.forEach(m => insM.run(m.id, m.title, m.lessons, m.category, m.description));
-  const insF = sqlite.prepare('INSERT INTO faqs(id,question,answer,category) VALUES(?,?,?,?)');
-  DEFAULT_FAQS.forEach(f => insF.run(f.id, f.question, f.answer, f.category));
-  setKv('siteContent', DEFAULT_CONTENT);
-  setKv('settings', DEFAULT_SETTINGS);
+  return {
+    users: [{
+      id: 'admin-001', name: 'Admin', email: adminEmail,
+      password: bcrypt.hashSync(adminPass, 10),
+      phone: '', city: 'Islamabad', role: 'admin', status: 'active',
+      referralCode: 'RAOWNER', referredBy: '',
+      createdAt: now(), stats: { leads: 0, approved: 0, commission: 0 }
+    }],
+    applications: [],
+    leads: [],
+    modules: DEFAULT_MODULES.map(m => ({ ...m })),
+    faqs: DEFAULT_FAQS.map(f => ({ ...f })),
+    siteContent: { ...DEFAULT_CONTENT },
+    settings: { ...DEFAULT_SETTINGS },
+    activityLogs: [],
+    notifications: [],
+    media: [],
+    progress: []
+  };
 }
 
-function migrateJson() {
-  if (!fs.existsSync(JSON_PATH)) return;
-  const flag = getKv('_jsonMigrated', false);
-  if (flag) return;
-  let data;
-  try { data = JSON.parse(fs.readFileSync(JSON_PATH, 'utf8')); } catch { return; }
-  const tx = sqlite.transaction(() => {
-    (data.users || []).forEach(u => {
-      try {
-        sqlite.prepare(`INSERT OR IGNORE INTO users(id,name,email,password,phone,city,role,status,referral_code,stats_leads,stats_approved,stats_commission,created_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-          u.id, u.name, u.email, u.password, u.phone || '', u.city || '', u.role || 'student',
-          u.status || 'active', u.referralCode || referralCode(),
-          u.stats?.leads || 0, u.stats?.approved || 0, u.stats?.commission || 0,
-          u.createdAt || now()
-        );
-      } catch {}
-    });
-    (data.applications || []).forEach(a => {
-      try {
-        sqlite.prepare(`INSERT OR IGNORE INTO applications(id,name,email,phone,city,message,status,created_at)
-          VALUES(?,?,?,?,?,?,?,?)`).run(a.id, a.name, a.email, a.phone, a.city || '', a.message || '', a.status || 'pending', a.createdAt || now());
-      } catch {}
-    });
-    (data.leads || []).forEach(l => {
-      try {
-        sqlite.prepare(`INSERT OR IGNORE INTO leads(id,student_id,student_name,student_email,business_name,contact_name,phone,email,city,website,need,notes,status,deal_amount,commission,payout_status,score,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-          l.id, l.studentId, l.studentName, l.studentEmail, l.businessName, l.contactName || '',
-          l.phone, l.email || '', l.city || '', l.website || '', l.need || '', l.notes || '',
-          l.status || 'submitted', l.dealAmount || 0, l.commission || 0, l.payoutStatus || 'unpaid',
-          l.score || 0, l.createdAt || now(), l.updatedAt || now()
-        );
-      } catch {}
-    });
-    if (data.siteContent) setKv('siteContent', { ...DEFAULT_CONTENT, ...data.siteContent });
-    if (data.settings) setKv('settings', { ...DEFAULT_SETTINGS, ...data.settings });
-    (data.activityLogs || []).forEach(e => {
-      try {
-        sqlite.prepare('INSERT OR IGNORE INTO activity_logs(id,action,detail,user_name,role,time) VALUES(?,?,?,?,?,?)')
-          .run(String(e.id), e.action, e.detail, e.user, e.role, e.time);
-      } catch {}
-    });
-    (data.notifications || []).forEach(n => {
-      try {
-        sqlite.prepare('INSERT OR IGNORE INTO notifications(id,user_id,title,message,read_flag,time) VALUES(?,?,?,?,?,?)')
-          .run(String(n.id), n.userId, n.title, n.message, n.read ? 1 : 0, n.time);
-      } catch {}
-    });
-    setKv('_jsonMigrated', true);
-  });
-  tx();
+function normalize(data) {
+  data.users = (data.users || []).map(u => ({
+    stats: { leads: 0, approved: 0, commission: 0 },
+    referralCode: u.referralCode || referralCode(),
+    referredBy: u.referredBy || '',
+    status: u.status || 'active',
+    ...u,
+    stats: u.stats || { leads: 0, approved: 0, commission: 0 }
+  }));
+  data.leads = (data.leads || []).map(l => ({
+    payoutStatus: l.payoutStatus || 'unpaid',
+    score: l.score || 0,
+    ...l
+  }));
+  data.applications = data.applications || [];
+  data.modules = data.modules && data.modules.length ? data.modules : DEFAULT_MODULES.map(m => ({ ...m }));
+  data.faqs = data.faqs && data.faqs.length ? data.faqs : DEFAULT_FAQS.map(f => ({ ...f }));
+  data.siteContent = { ...DEFAULT_CONTENT, ...(data.siteContent || {}) };
+  data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  data.activityLogs = data.activityLogs || [];
+  data.notifications = data.notifications || [];
+  data.media = data.media || [];
+  data.progress = data.progress || [];
+  return data;
 }
 
-seedIfEmpty();
-migrateJson();
+function load() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      return normalize(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+    }
+    if (!IS_SERVERLESS && fs.existsSync(LEGACY_JSON) && LEGACY_JSON !== DATA_FILE) {
+      const data = normalize(JSON.parse(fs.readFileSync(LEGACY_JSON, 'utf8')));
+      save(data);
+      return data;
+    }
+  } catch (e) {
+    console.error('DB load error', e.message);
+  }
+  const data = emptyDb();
+  save(data);
+  return data;
+}
+
+function save(data) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+let store = load();
 
 function scoreLead({ website, need, phone, email, city, notes, contactName }) {
   let s = 10;
@@ -265,239 +137,244 @@ function scoreLead({ website, need, phone, email, city, notes, contactName }) {
 }
 
 const api = {
-  nid, now, referralCode, scoreLead, sqlite,
+  nid, now, referralCode, scoreLead,
 
   health() {
-    return {
-      users: sqlite.prepare('SELECT COUNT(*) c FROM users').get().c,
-      leads: sqlite.prepare('SELECT COUNT(*) c FROM leads').get().c
-    };
+    return { users: store.users.length, leads: store.leads.length };
   },
 
-  getSiteContent() { return getKv('siteContent', DEFAULT_CONTENT); },
-  setSiteContent(patch) { const cur = { ...this.getSiteContent(), ...patch }; setKv('siteContent', cur); return cur; },
-  getSettings() { return getKv('settings', DEFAULT_SETTINGS); },
+  getSiteContent() { return store.siteContent; },
+  setSiteContent(patch) { store.siteContent = { ...store.siteContent, ...patch }; save(store); return store.siteContent; },
+  getSettings() { return store.settings; },
   setSettings(patch) {
-    const cur = { ...this.getSettings(), ...patch };
-    setKv('settings', cur);
+    store.settings = { ...store.settings, ...patch };
     if (patch.commissionRate !== undefined) {
-      const sc = this.getSiteContent();
-      sc.commissionExample = sc.commissionExample || { deal: 30000, rate: 10, commission: 3000 };
-      sc.commissionExample.rate = Number(patch.commissionRate);
-      sc.commissionExample.commission = Math.round((sc.commissionExample.deal || 30000) * Number(patch.commissionRate) / 100);
-      setKv('siteContent', sc);
+      store.siteContent.commissionExample = store.siteContent.commissionExample || { deal: 30000, rate: 10, commission: 3000 };
+      store.siteContent.commissionExample.rate = Number(patch.commissionRate);
+      store.siteContent.commissionExample.commission = Math.round((store.siteContent.commissionExample.deal || 30000) * Number(patch.commissionRate) / 100);
     }
-    return cur;
+    save(store);
+    return store.settings;
   },
 
-  getUsers() { return sqlite.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(mapUser); },
-  getUserById(id) { return mapUser(sqlite.prepare('SELECT * FROM users WHERE id=?').get(id)); },
-  getUserByEmail(email) { return mapUser(sqlite.prepare('SELECT * FROM users WHERE email=?').get(email)); },
-  getUserByReferral(code) { return mapUser(sqlite.prepare('SELECT * FROM users WHERE referral_code=?').get(code)); },
+  getUsers() { return store.users.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
+  getUserById(id) { return store.users.find(u => u.id === id) || null; },
+  getUserByEmail(email) { return store.users.find(u => u.email === email) || null; },
+  getUserByReferral(code) { return store.users.find(u => u.referralCode === code) || null; },
   createUser(u) {
-    const id = u.id || nid('usr');
-    const code = u.referralCode || referralCode();
-    sqlite.prepare(`INSERT INTO users(id,name,email,password,phone,city,role,status,referral_code,referred_by,stats_leads,stats_approved,stats_commission,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      id, u.name, u.email, u.password, u.phone || '', u.city || '', u.role || 'student',
-      u.status || 'active', code, u.referredBy || '', 0, 0, 0, u.createdAt || now()
-    );
-    return this.getUserById(id);
+    const user = {
+      id: u.id || nid('usr'),
+      name: u.name, email: u.email, password: u.password,
+      phone: u.phone || '', city: u.city || '',
+      role: u.role || 'student', status: u.status || 'active',
+      referralCode: u.referralCode || referralCode(),
+      referredBy: u.referredBy || '',
+      createdAt: u.createdAt || now(),
+      stats: { leads: 0, approved: 0, commission: 0 }
+    };
+    store.users.push(user);
+    save(store);
+    return user;
   },
   updateUser(id, patch) {
     const u = this.getUserById(id);
     if (!u) return null;
-    const next = {
-      name: patch.name !== undefined ? patch.name : u.name,
-      phone: patch.phone !== undefined ? patch.phone : u.phone,
-      city: patch.city !== undefined ? patch.city : u.city,
-      role: patch.role !== undefined ? patch.role : u.role,
-      status: patch.status !== undefined ? patch.status : u.status,
-      password: patch.password !== undefined ? patch.password : u.password,
-      stats_leads: patch.stats?.leads !== undefined ? patch.stats.leads : u.stats.leads,
-      stats_approved: patch.stats?.approved !== undefined ? patch.stats.approved : u.stats.approved,
-      stats_commission: patch.stats?.commission !== undefined ? patch.stats.commission : u.stats.commission
-    };
-    sqlite.prepare(`UPDATE users SET name=?, phone=?, city=?, role=?, status=?, password=?, stats_leads=?, stats_approved=?, stats_commission=? WHERE id=?`)
-      .run(next.name, next.phone, next.city, next.role, next.status, next.password, next.stats_leads, next.stats_approved, next.stats_commission, id);
-    return this.getUserById(id);
+    if (patch.name !== undefined) u.name = patch.name;
+    if (patch.phone !== undefined) u.phone = patch.phone;
+    if (patch.city !== undefined) u.city = patch.city;
+    if (patch.role !== undefined) u.role = patch.role;
+    if (patch.status !== undefined) u.status = patch.status;
+    if (patch.password !== undefined) u.password = patch.password;
+    if (patch.stats) u.stats = { ...u.stats, ...patch.stats };
+    save(store);
+    return u;
   },
   deleteUser(id) {
-    sqlite.prepare('DELETE FROM leads WHERE student_id=?').run(id);
-    const email = (this.getUserById(id) || {}).email;
-    sqlite.prepare('DELETE FROM users WHERE id=?').run(id);
-    if (email) sqlite.prepare('DELETE FROM applications WHERE email=?').run(email);
+    const u = this.getUserById(id);
+    store.users = store.users.filter(x => x.id !== id);
+    store.leads = store.leads.filter(l => l.studentId !== id);
+    if (u) store.applications = store.applications.filter(a => a.email !== u.email);
+    save(store);
   },
   recalcStudentStats(studentId) {
-    const leads = sqlite.prepare('SELECT * FROM leads WHERE student_id=?').all(studentId);
+    const leads = store.leads.filter(l => l.studentId === studentId);
     const stats = {
       leads: leads.length,
       approved: leads.filter(l => l.status !== 'rejected').length,
       commission: leads.filter(l => l.status === 'closed' || l.status === 'paid').reduce((s, l) => s + (l.commission || 0), 0)
     };
-    sqlite.prepare('UPDATE users SET stats_leads=?, stats_approved=?, stats_commission=? WHERE id=?')
-      .run(stats.leads, stats.approved, stats.commission, studentId);
+    const u = this.getUserById(studentId);
+    if (u) { u.stats = stats; save(store); }
     return stats;
   },
 
-  getApplications() {
-    return sqlite.prepare('SELECT * FROM applications ORDER BY created_at DESC').all().map(mapApp);
-  },
-  getApplicationById(id) { return mapApp(sqlite.prepare('SELECT * FROM applications WHERE id=?').get(id)); },
-  getApplicationByEmail(email) { return mapApp(sqlite.prepare('SELECT * FROM applications WHERE email=?').get(email)); },
+  getApplications() { return store.applications.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
+  getApplicationById(id) { return store.applications.find(a => a.id === id) || null; },
+  getApplicationByEmail(email) { return store.applications.find(a => a.email === email) || null; },
   createApplication(a) {
-    const id = a.id || nid('app');
-    sqlite.prepare(`INSERT INTO applications(id,name,email,phone,city,message,status,referral_code,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?)`).run(id, a.name, a.email, a.phone, a.city || '', a.message || '', a.status || 'pending', a.referralCode || '', a.createdAt || now());
-    return this.getApplicationById(id);
+    const row = {
+      id: a.id || nid('app'), name: a.name, email: a.email, phone: a.phone,
+      city: a.city || '', message: a.message || '', status: a.status || 'pending',
+      referralCode: a.referralCode || '', createdAt: a.createdAt || now()
+    };
+    store.applications.push(row);
+    save(store);
+    return row;
   },
   updateApplication(id, patch) {
     const a = this.getApplicationById(id);
     if (!a) return null;
-    const status = patch.status !== undefined ? patch.status : a.status;
-    sqlite.prepare('UPDATE applications SET status=? WHERE id=?').run(status, id);
-    return this.getApplicationById(id);
+    if (patch.status !== undefined) a.status = patch.status;
+    save(store);
+    return a;
   },
 
   getLeads({ role, userId } = {}) {
-    const rows = role === 'admin'
-      ? sqlite.prepare('SELECT * FROM leads ORDER BY created_at DESC').all()
-      : sqlite.prepare('SELECT * FROM leads WHERE student_id=? ORDER BY created_at DESC').all(userId);
-    return rows.map(mapLead);
+    let rows = role === 'admin' ? store.leads.slice() : store.leads.filter(l => l.studentId === userId);
+    return rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   },
-  getLeadById(id) { return mapLead(sqlite.prepare('SELECT * FROM leads WHERE id=?').get(id)); },
+  getLeadById(id) { return store.leads.find(l => l.id === id) || null; },
   createLead(l) {
-    const id = l.id || nid('lead');
-    const score = l.score != null ? l.score : scoreLead(l);
-    sqlite.prepare(`INSERT INTO leads(id,student_id,student_name,student_email,business_name,contact_name,phone,email,city,website,need,notes,status,deal_amount,commission,payout_status,score,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      id, l.studentId, l.studentName, l.studentEmail, l.businessName, l.contactName || '',
-      l.phone, l.email || '', l.city || '', l.website || '', l.need || '', l.notes || '',
-      l.status || 'submitted', l.dealAmount || 0, l.commission || 0, l.payoutStatus || 'unpaid',
-      score, l.createdAt || now(), l.updatedAt || now()
-    );
+    const lead = {
+      id: l.id || nid('lead'),
+      studentId: l.studentId, studentName: l.studentName, studentEmail: l.studentEmail,
+      businessName: l.businessName, contactName: l.contactName || '',
+      phone: l.phone, email: l.email || '', city: l.city || '',
+      website: l.website || '', need: l.need || '', notes: l.notes || '',
+      status: l.status || 'submitted',
+      dealAmount: l.dealAmount || 0, commission: l.commission || 0,
+      payoutStatus: l.payoutStatus || 'unpaid',
+      score: l.score != null ? l.score : scoreLead(l),
+      createdAt: l.createdAt || now(), updatedAt: l.updatedAt || now()
+    };
+    store.leads.push(lead);
+    save(store);
     this.recalcStudentStats(l.studentId);
-    return this.getLeadById(id);
+    return lead;
   },
   updateLead(id, patch) {
     const l = this.getLeadById(id);
     if (!l) return null;
-    const next = { ...l, ...patch, updatedAt: now() };
-    sqlite.prepare(`UPDATE leads SET status=?, deal_amount=?, commission=?, payout_status=?, score=?, updated_at=? WHERE id=?`)
-      .run(next.status, Number(next.dealAmount) || 0, Number(next.commission) || 0, next.payoutStatus || 'unpaid', Number(next.score) || 0, next.updatedAt, id);
-    if (next.studentId) this.recalcStudentStats(next.studentId);
-    return this.getLeadById(id);
+    if (patch.status !== undefined) l.status = patch.status;
+    if (patch.dealAmount !== undefined) l.dealAmount = Number(patch.dealAmount) || 0;
+    if (patch.commission !== undefined) l.commission = Number(patch.commission) || 0;
+    if (patch.payoutStatus !== undefined) l.payoutStatus = patch.payoutStatus;
+    if (patch.score !== undefined) l.score = Number(patch.score) || 0;
+    l.updatedAt = now();
+    save(store);
+    if (l.studentId) this.recalcStudentStats(l.studentId);
+    return l;
   },
   deleteLeads(ids) {
-    const stmt = sqlite.prepare('DELETE FROM leads WHERE id=?');
-    const tx = sqlite.transaction((arr) => arr.forEach(id => stmt.run(id)));
-    tx(ids);
+    store.leads = store.leads.filter(l => !ids.includes(l.id));
+    save(store);
   },
   searchLeads({ role, userId, q, status, city, need, page = 1, limit = 10 }) {
-    let sql = 'SELECT * FROM leads WHERE 1=1';
-    const params = [];
-    if (role !== 'admin') { sql += ' AND student_id=?'; params.push(userId); }
-    if (q) { sql += ' AND (lower(business_name) LIKE ? OR lower(student_name) LIKE ? OR phone LIKE ?)'; const qq = `%${String(q).toLowerCase()}%`; params.push(qq, qq, `%${q}%`); }
-    if (status) { sql += ' AND status=?'; params.push(status); }
-    if (city) { sql += ' AND city=?'; params.push(city); }
-    if (need) { sql += ' AND need=?'; params.push(need); }
-    sql += ' ORDER BY created_at DESC';
-    const all = sqlite.prepare(sql).all(...params).map(mapLead);
-    const total = all.length;
+    let leads = role === 'admin' ? store.leads.slice() : store.leads.filter(l => l.studentId === userId);
+    if (q) {
+      const qq = String(q).toLowerCase();
+      leads = leads.filter(l => (l.businessName || '').toLowerCase().includes(qq) || (l.studentName || '').toLowerCase().includes(qq) || (l.phone || '').includes(q));
+    }
+    if (status) leads = leads.filter(l => l.status === status);
+    if (city) leads = leads.filter(l => l.city === city);
+    if (need) leads = leads.filter(l => l.need === need);
+    leads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const total = leads.length;
     const start = (Number(page) - 1) * Number(limit);
-    return { total, page: Number(page), limit: Number(limit), leads: all.slice(start, start + Number(limit)) };
+    return { total, page: Number(page), limit: Number(limit), leads: leads.slice(start, start + Number(limit)) };
   },
 
-  getModules() { return sqlite.prepare('SELECT * FROM modules').all().map(mapMod); },
-  getModuleById(id) { return mapMod(sqlite.prepare('SELECT * FROM modules WHERE id=?').get(String(id))); },
+  getModules() { return store.modules.slice(); },
+  getModuleById(id) { return store.modules.find(m => String(m.id) === String(id)) || null; },
   createModule(m) {
-    const id = String(m.id || Date.now());
-    sqlite.prepare('INSERT INTO modules(id,title,lessons,category,description) VALUES(?,?,?,?,?)')
-      .run(id, m.title, Number(m.lessons) || 1, m.category || 'general', m.description || '');
-    return this.getModuleById(id);
+    const mod = { id: String(m.id || Date.now()), title: m.title, lessons: Number(m.lessons) || 1, category: m.category || 'general', description: m.description || '' };
+    store.modules.push(mod);
+    save(store);
+    return mod;
   },
   updateModule(id, patch) {
     const m = this.getModuleById(id);
     if (!m) return null;
-    sqlite.prepare('UPDATE modules SET title=?, lessons=?, category=?, description=? WHERE id=?')
-      .run(patch.title !== undefined ? patch.title : m.title,
-        patch.lessons !== undefined ? Number(patch.lessons) : m.lessons,
-        patch.category !== undefined ? patch.category : m.category,
-        patch.description !== undefined ? patch.description : m.description, String(id));
-    return this.getModuleById(id);
+    if (patch.title !== undefined) m.title = patch.title;
+    if (patch.lessons !== undefined) m.lessons = Number(patch.lessons);
+    if (patch.category !== undefined) m.category = patch.category;
+    if (patch.description !== undefined) m.description = patch.description;
+    save(store);
+    return m;
   },
   deleteModule(id) {
-    sqlite.prepare('DELETE FROM module_progress WHERE module_id=?').run(String(id));
-    sqlite.prepare('DELETE FROM modules WHERE id=?').run(String(id));
+    store.modules = store.modules.filter(m => String(m.id) !== String(id));
+    store.progress = store.progress.filter(p => String(p.moduleId) !== String(id));
+    save(store);
   },
   getProgress(userId) {
-    const rows = sqlite.prepare('SELECT * FROM module_progress WHERE user_id=?').all(userId);
     const map = {};
-    rows.forEach(r => { map[r.module_id] = { completed: !!r.completed, completedAt: r.completed_at }; });
+    store.progress.filter(p => p.userId === userId).forEach(p => {
+      map[p.moduleId] = { completed: !!p.completed, completedAt: p.completedAt };
+    });
     return map;
   },
   completeModule(userId, moduleId) {
-    sqlite.prepare(`INSERT INTO module_progress(user_id,module_id,completed,completed_at) VALUES(?,?,1,?)
-      ON CONFLICT(user_id,module_id) DO UPDATE SET completed=1, completed_at=excluded.completed_at`)
-      .run(userId, String(moduleId), now());
+    const existing = store.progress.find(p => p.userId === userId && String(p.moduleId) === String(moduleId));
+    if (existing) { existing.completed = true; existing.completedAt = now(); }
+    else store.progress.push({ userId, moduleId: String(moduleId), completed: true, completedAt: now() });
+    save(store);
     return this.getProgress(userId);
   },
 
-  getFaqs() { return sqlite.prepare('SELECT * FROM faqs').all().map(mapFaq); },
-  getFaqById(id) { return mapFaq(sqlite.prepare('SELECT * FROM faqs WHERE id=?').get(String(id))); },
+  getFaqs() { return store.faqs.slice(); },
+  getFaqById(id) { return store.faqs.find(f => String(f.id) === String(id)) || null; },
   createFaq(f) {
-    const id = String(f.id || Date.now());
-    sqlite.prepare('INSERT INTO faqs(id,question,answer,category) VALUES(?,?,?,?)')
-      .run(id, f.question, f.answer, f.category || 'general');
-    return this.getFaqById(id);
+    const row = { id: String(f.id || Date.now()), question: f.question, answer: f.answer, category: f.category || 'general' };
+    store.faqs.push(row);
+    save(store);
+    return row;
   },
   updateFaq(id, patch) {
     const f = this.getFaqById(id);
     if (!f) return null;
-    sqlite.prepare('UPDATE faqs SET question=?, answer=?, category=? WHERE id=?')
-      .run(patch.question !== undefined ? patch.question : f.question,
-        patch.answer !== undefined ? patch.answer : f.answer,
-        patch.category !== undefined ? patch.category : f.category, String(id));
-    return this.getFaqById(id);
+    if (patch.question !== undefined) f.question = patch.question;
+    if (patch.answer !== undefined) f.answer = patch.answer;
+    if (patch.category !== undefined) f.category = patch.category;
+    save(store);
+    return f;
   },
-  deleteFaq(id) { sqlite.prepare('DELETE FROM faqs WHERE id=?').run(String(id)); },
+  deleteFaq(id) {
+    store.faqs = store.faqs.filter(f => String(f.id) !== String(id));
+    save(store);
+  },
 
   logActivity(action, detail, user) {
-    sqlite.prepare('INSERT INTO activity_logs(id,action,detail,user_name,role,time) VALUES(?,?,?,?,?,?)')
-      .run(nid('log'), action, detail, user?.name || 'System', user?.role || 'system', now());
-    const extra = sqlite.prepare('SELECT id FROM activity_logs ORDER BY time DESC LIMIT -1 OFFSET 200').all();
-    extra.forEach(r => sqlite.prepare('DELETE FROM activity_logs WHERE id=?').run(r.id));
+    store.activityLogs.unshift({
+      id: nid('log'), action, detail,
+      user: user?.name || 'System', role: user?.role || 'system', time: now()
+    });
+    store.activityLogs = store.activityLogs.slice(0, 200);
+    save(store);
   },
-  getActivity(limit = 100) {
-    return sqlite.prepare('SELECT * FROM activity_logs ORDER BY time DESC LIMIT ?').all(limit).map(r => ({
-      id: r.id, action: r.action, detail: r.detail, user: r.user_name, role: r.role, time: r.time
-    }));
-  },
-  clearActivity() { sqlite.prepare('DELETE FROM activity_logs').run(); },
+  getActivity(limit = 100) { return store.activityLogs.slice(0, limit); },
+  clearActivity() { store.activityLogs = []; save(store); },
 
   addNotification({ userId, title, message }) {
-    sqlite.prepare('INSERT INTO notifications(id,user_id,title,message,read_flag,time) VALUES(?,?,?,?,0,?)')
-      .run(nid('ntf'), userId, title, message, now());
+    store.notifications.push({ id: nid('ntf'), userId, title, message, read: false, time: now() });
+    save(store);
   },
   getNotifications(userId) {
-    return sqlite.prepare('SELECT * FROM notifications WHERE user_id=? ORDER BY time DESC LIMIT 20').all(userId).map(n => ({
-      id: n.id, userId: n.user_id, title: n.title, message: n.message, read: !!n.read_flag, time: n.time
-    }));
+    return store.notifications.filter(n => n.userId === userId).sort((a, b) => new Date(b.time) - new Date(a.time)).slice(0, 20);
   },
   markNotificationsRead(userId) {
-    sqlite.prepare('UPDATE notifications SET read_flag=1 WHERE user_id=?').run(userId);
+    store.notifications.forEach(n => { if (n.userId === userId) n.read = true; });
+    save(store);
   },
 
   addMedia({ url, filename, type }) {
-    sqlite.prepare('INSERT INTO media(id,url,filename,type,created_at) VALUES(?,?,?,?,?)')
-      .run(nid('med'), url, filename, type || 'image', now());
+    store.media.push({ id: nid('med'), url, filename, type: type || 'image', createdAt: now() });
+    save(store);
   },
 
   analytics() {
-    const leads = sqlite.prepare('SELECT * FROM leads').all().map(mapLead);
-    const byStatus = {
-      submitted: 0, under_review: 0, qualified: 0, closed: 0, paid: 0, rejected: 0
-    };
+    const leads = store.leads;
+    const byStatus = { submitted: 0, under_review: 0, qualified: 0, closed: 0, paid: 0, rejected: 0 };
     leads.forEach(l => { if (byStatus[l.status] !== undefined) byStatus[l.status]++; });
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const months = [];
@@ -510,12 +387,12 @@ const api = {
       });
       months.push({
         month: monthNames[d.getMonth()],
-        key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
+        key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
         count: count.length,
         commission: count.reduce((s, l) => s + (l.commission || 0), 0)
       });
     }
-    const students = sqlite.prepare("SELECT * FROM users WHERE role='student'").all().map(mapUser);
+    const students = store.users.filter(u => u.role === 'student');
     const studentStats = students.map(u => {
       const my = leads.filter(l => l.studentId === u.id);
       return { name: u.name, email: u.email, leads: my.length, commission: my.reduce((s, l) => s + (l.commission || 0), 0), closed: my.filter(l => l.status === 'closed' || l.status === 'paid').length };
@@ -529,35 +406,34 @@ const api = {
   },
 
   leaderboard(limit = 10) {
-    const students = sqlite.prepare("SELECT * FROM users WHERE role='student'").all().map(mapUser);
-    const leads = sqlite.prepare('SELECT * FROM leads').all().map(mapLead);
+    const students = store.users.filter(u => u.role === 'student');
     return students.map(u => {
-      const my = leads.filter(l => l.studentId === u.id);
+      const my = store.leads.filter(l => l.studentId === u.id);
       const closed = my.filter(l => l.status === 'closed' || l.status === 'paid');
-      const progress = sqlite.prepare('SELECT COUNT(*) c FROM module_progress WHERE user_id=? AND completed=1').get(u.id).c;
+      const modulesCompleted = store.progress.filter(p => p.userId === u.id && p.completed).length;
       return {
         id: u.id, name: u.name, city: u.city, referralCode: u.referralCode,
         leads: my.length, closed: closed.length,
         commission: closed.reduce((s, l) => s + (l.commission || 0), 0),
-        modulesCompleted: progress
+        modulesCompleted
       };
     }).sort((a, b) => b.closed - a.closed || b.leads - a.leads).slice(0, limit);
   },
 
   statsFor(user) {
     if (user.role === 'admin') {
-      const leads = sqlite.prepare('SELECT status, commission FROM leads').all();
+      const leads = store.leads;
       return {
         totalLeads: leads.length,
         pending: leads.filter(l => l.status === 'submitted').length,
         qualified: leads.filter(l => l.status === 'qualified').length,
         closed: leads.filter(l => l.status === 'closed' || l.status === 'paid').length,
         totalCommission: leads.reduce((s, l) => s + (l.commission || 0), 0),
-        totalUsers: sqlite.prepare("SELECT COUNT(*) c FROM users WHERE role='student'").get().c,
-        pendingApps: sqlite.prepare("SELECT COUNT(*) c FROM applications WHERE status='pending'").get().c
+        totalUsers: store.users.filter(u => u.role === 'student').length,
+        pendingApps: store.applications.filter(a => a.status === 'pending').length
       };
     }
-    const my = sqlite.prepare('SELECT status, commission FROM leads WHERE student_id=?').all(user.id);
+    const my = store.leads.filter(l => l.studentId === user.id);
     return {
       totalLeads: my.length,
       pending: my.filter(l => l.status === 'submitted' || l.status === 'under_review').length,
