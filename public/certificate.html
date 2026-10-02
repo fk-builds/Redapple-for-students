@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Apple Certificate</title>
+<style>
+  body{font-family:Georgia,serif;background:#f8fafc;margin:0;padding:24px;color:#0f172a}
+  .sheet{max-width:800px;margin:0 auto;background:#fff;border:8px solid #e30613;padding:48px 40px;text-align:center;position:relative}
+  .mark{width:72px;height:72px;object-fit:contain}
+  h1{font-size:28px;letter-spacing:.12em;margin:12px 0 4px;color:#e30613}
+  h2{font-weight:400;font-size:14px;letter-spacing:.2em;text-transform:uppercase;color:#64748b;margin:0 0 28px}
+  .name{font-size:32px;margin:12px 0;font-family:'Times New Roman',serif}
+  .mod{font-size:20px;color:#e30613;margin:8px 0 24px}
+  p{color:#334155;line-height:1.6}
+  .row{display:flex;justify-content:space-between;margin-top:40px;font-size:12px;color:#64748b}
+  @media print { body{background:#fff;padding:0} .noprint{display:none} }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <img class="mark" src="/img/logo.png" alt="Red Apple">
+  <h1>RED APPLE</h1>
+  <h2>Digital Agency · Student Partner Certificate</h2>
+  <p>This certifies that</p>
+  <div class="name" id="name">Student</div>
+  <p>has successfully completed the training module</p>
+  <div class="mod" id="mod">Module</div>
+  <p>and is recognized as a trained Red Apple Student Partner.</p>
+  <div class="row">
+    <div>Date: <span id="date"></span></div>
+    <div>Red Apple Digital Agency</div>
+  </div>
+</div>
+<p class="noprint" style="text-align:center;margin-top:16px">
+  <button onclick="window.print()" style="padding:10px 18px;border:0;border-radius:999px;background:#e30613;color:#fff;font-weight:700;cursor:pointer">Print / Save PDF</button>
+</p>
+<script>
+const q=new URLSearchParams(location.search);
+document.getElementById('name').textContent=q.get('name')||'Student Partner';
+document.getElementById('mod').textContent=q.get('module')||'Training Module';
+document.getElementById('date').textContent=q.get('date')||new Date().toISOString().slice(0,10);
+</script>
+</body>
+</html>

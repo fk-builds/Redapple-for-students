@@ -1,60 +1,41 @@
-# 🍎 Red Apple Student Partner — Full Stack Platform
+# Red Apple Student Partner — Full Stack
 
-Real full-stack project for **Red Apple Digital Agency** Student Partner Program.  
-No more static demo — this is production-ready with backend, database, auth, dashboards.
+Production-style platform for **Red Apple Digital Agency** Student Partner Program.
 
-### ✨ Features (Realistic)
-- **Landing Page** — same pixel-perfect design, but with real API integration (no background lights, clean corporate look)
-- **Auth System** — JWT, bcrypt, register/login, role-based (student / admin)
-- **Student Application** — `POST /api/apply` → saves to DB, auto-creates account with temp password
-- **Lead Submission** — students submit business leads, track status live
-- **Commission Engine** — 10% auto-calculated on `closed` status, manual payout tracking
-- **Student Dashboard** — stats, training modules, lead table, commission calculator
-- **Admin Panel** — verify applications, update lead status, set deal amounts, view all users
-- **Database** — JSON file persistence (swap to Postgres/Mongo in prod) — `data/db.json`
+## Stack
+- Express + JWT + bcrypt
+- **SQLite** (`data/redapple.sqlite`) — real relational DB (swap to Supabase/Postgres later)
+- Single-page app in `public/index.html`
+- Local image uploads in `public/uploads`
 
-### 🗂️ Project Structure
-```
-├── server.js          # Express + JWT + bcrypt backend
-├── package.json
-├── data/db.json       # auto-created database
-└── public/
-    ├── index.html     # Landing (real API calls)
-    ├── dashboard.html # Student dashboard
-    └── admin.html     # Admin panel
-```
-
-### 🚀 Run Locally
+## Run
 ```bash
 npm install
+cp .env.example .env   # set JWT_SECRET
 npm start
-# open http://localhost:3000
+# http://localhost:3000
 ```
 
-### 🔐 Demo Accounts
-- **Admin:** `admin@redapple.digital` / `admin123`
-- **Student:** Register via "Become a Student Partner" or "Create Account" — then login.
+Admin: `admin@redapple.digital` / `admin123`
 
-### 🔌 API Endpoints
-```
-POST   /api/apply              # student partner application
-POST   /api/auth/register
-POST   /api/auth/login
-GET    /api/me
-POST   /api/leads              # submit lead
-GET    /api/leads
-PATCH  /api/leads/:id          # admin update status/deal
-GET    /api/stats
-GET    /api/applications       # admin
-PATCH  /api/applications/:id
-GET    /api/users              # admin
-GET    /api/modules
-GET    /api/health
-```
+## What is included
+- Auth, applications, leads, commissions (info-only, no payment gateway)
+- Owner-only admin in sidebar
+- CMS: content, training, FAQ, settings, media, analytics, roles, export
+- Activity log, bulk actions, filters, pagination, notifications, profile
+- SQLite DB, `.env` secrets, rate limits, validation
+- Student sees only own leads
+- Training progress + printable certificates
+- Commission payout status (unpaid / processing / paid)
+- Referral codes, leaderboard, lead scoring
+- WhatsApp click-to-chat on leads
+- PWA (Add to Home Screen)
+- Fully responsive + official logo
 
-### 🌐 Deployment
-- Works on any Node host (Render, Railway, VPS, cPanel Node)
-- Set `JWT_SECRET` and `PORT` in env for production
-- Replace JSON DB with Postgres by swapping `loadDB/saveDB`
+## Database note
+SQLite is the live database now. To move to **Supabase**:
+1. Create a Supabase project
+2. Put `DATABASE_URL` / `SUPABASE_URL` + service key in `.env`
+3. Keep this Express API — only `db.js` needs a Postgres adapter
 
-© 2025 Red Apple Digital Agency
+SMTP is optional. If unset, emails stay as in-app notifications.
