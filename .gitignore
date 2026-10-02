@@ -3,3 +3,8 @@ data/
 uploads/
 .DS_Store
 *.log
+.npm/
+Unselected files/
+public/uploads/
+.env
+.env.*
