@@ -23,7 +23,7 @@ const DEFAULT_CONTENT = {
   whatIsTitle: 'What is the Student Partner Program?',
   whatIsDesc: 'The Student Partner program teaches students how to identify businesses that may need digital services and how to approach them professionally. You find the right opportunities, we handle the rest.',
   commissionExample: { deal: 30000, rate: 10, commission: 3000 },
-  heroImage: 'https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=800&q=80&auto=format&fit=crop',
+  heroImage: '',
   logoText: 'RED APPLE'
 };
 const DEFAULT_SETTINGS = {

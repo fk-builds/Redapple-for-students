@@ -320,29 +320,20 @@ app.post('/api/apply', authLimiter, async (req, res) => {
   if (!name || !email || !phone) return res.status(400).json({ error: 'Name, email, phone required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'Invalid email' });
   if (!validPhone(phone)) return res.status(400).json({ error: 'Invalid phone (min 10 digits)' });
-  if (db.getApplicationByEmail(email) || db.getUserByEmail(email)) {
-    return res.status(400).json({ error: 'Application already exists with this email' });
-  }
-  let referredBy = '';
-  if (referralCode) {
-    const ref = db.getUserByReferral(String(referralCode).trim().toUpperCase());
-    if (ref) referredBy = ref.id;
+  if (db.getApplicationByEmail(email.trim().toLowerCase())) {
+    return res.status(400).json({ error: 'An application with this email is already on file' });
   }
   const appEntry = db.createApplication({
     name: cleanText(name, 80), email: email.trim().toLowerCase(),
     phone: cleanText(phone, 30), city: cleanText(city, 60),
     message: cleanText(message, 500), referralCode: cleanText(referralCode, 20)
   });
-  const tempPass = String(phone).replace(/\D/g, '').slice(-4) + '123';
-  const user = db.createUser({
-    name: appEntry.name, email: appEntry.email,
-    password: await bcrypt.hash(tempPass, 10),
-    phone: appEntry.phone, city: appEntry.city, role: 'student', status: 'pending',
-    referredBy
-  });
-  db.logActivity('Application', `${user.name} applied`, { name: 'System', role: 'system' });
-  notify(user.id, 'Application received', 'Your Student Partner application is under review.', user.email);
-  res.json({ success: true, message: 'Application submitted successfully', tempPassword: tempPass, application: appEntry });
+  const existing = db.getUserByEmail(appEntry.email);
+  if (existing) {
+    notify(existing.id, 'Application received', 'Your Student Partner application is under review.', existing.email);
+  }
+  db.logActivity('Application', `${appEntry.name} applied`, { name: 'System', role: 'system' });
+  res.json({ success: true, message: 'Application received. Our team will review it and contact you.' });
 });
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
